@@ -6,18 +6,31 @@ const bcrypt = require('bcrypt');
 const cors = require('cors');
 
 const app = express();
-const PORT = 3000;
-const SECRET_KEY = 'your_secret_key';
+const PORT = process.env.PORT || 3000;
+const SECRET_KEY = process.env.SECRET_KEY || 'your_default_secret_key';
 
 app.use(cors());
 app.use(bodyParser.json());
 
+// Middleware to handle various errors
+app.use((err, req, res, next) => {
+    if (err.name === 'UnauthorizedError') {
+        res.status(401).send('Invalid token...');
+    } else if (err.name === 'JsonWebTokenError') {
+        res.status(401).send('Invalid token...');
+    } else if (err.name === 'TokenExpiredError') {
+        res.status(401).send('Token expired...');
+    } else {
+        console.error('Internal Server Error:', err);
+        res.status(500).send('Something went wrong...');
+    }
+});
+
 const db = new sqlite3.Database('./tasks.db', (err) => {
     if (err) {
-        console.error('Database connection error:', err.message);
-    } else {
-        console.log('Connected to the tasks database.');
+        console.error(err.message);
     }
+    console.log('Connected to the tasks database.');
 });
 
 db.run(`CREATE TABLE IF NOT EXISTS users (
@@ -40,14 +53,12 @@ app.post('/api/register', (req, res) => {
 
     bcrypt.hash(password, 10, (err, hash) => {
         if (err) {
-            console.error('Error hashing password:', err);
             return res.status(500).json({ message: 'Error hashing password' });
         }
 
         const stmt = db.prepare('INSERT INTO users (username, password, role) VALUES (?, ?, ?)');
         stmt.run(username, hash, role, function (err) {
             if (err) {
-                console.error('Error registering user:', err);
                 return res.status(400).json({ message: 'Error registering user' });
             }
 
@@ -63,7 +74,6 @@ app.post('/api/login', (req, res) => {
     const stmt = db.prepare('SELECT * FROM users WHERE username = ? AND role = ?');
     stmt.get(username, role, (err, user) => {
         if (err) {
-            console.error('Error fetching user:', err);
             return res.status(500).json({ message: 'Error fetching user' });
         }
 
@@ -73,7 +83,6 @@ app.post('/api/login', (req, res) => {
 
         bcrypt.compare(password, user.password, (err, result) => {
             if (err) {
-                console.error('Error comparing passwords:', err);
                 return res.status(500).json({ message: 'Error comparing passwords' });
             }
 
@@ -93,7 +102,6 @@ function authenticateToken(req, res, next) {
     const token = authHeader && authHeader.split(' ')[1]; // Extract token from header
 
     if (!token) {
-        console.log('No token provided');
         return res.sendStatus(401); // Return unauthorized if no token
     }
 
@@ -116,15 +124,13 @@ app.get('/api/tasks', authenticateToken, (req, res) => {
     const userRole = req.user.role;
 
     let query;
-    let params = [];
     if (userRole === 'admin') {
         query = 'SELECT * FROM tasks';
     } else {
         query = 'SELECT * FROM tasks WHERE teacher_id = ?';
-        params = [userId];
     }
 
-    db.all(query, params, (err, rows) => {
+    db.all(query, [userId], (err, rows) => {
         if (err) {
             return res.status(500).json({ message: 'Error fetching tasks' });
         }
@@ -139,7 +145,6 @@ app.post('/api/tasks', authenticateToken, (req, res) => {
     const stmt = db.prepare('INSERT INTO tasks (description, date, teacher_id) VALUES (?, ?, ?)');
     stmt.run(description, date, teacherId, function (err) {
         if (err) {
-            console.error('Error creating task:', err);
             return res.status(400).json({ message: 'Error creating task' });
         }
 
@@ -150,7 +155,6 @@ app.post('/api/tasks', authenticateToken, (req, res) => {
 app.get('/api/teachers', authenticateToken, (req, res) => {
     db.all('SELECT id, username FROM users WHERE role = "teacher"', (err, rows) => {
         if (err) {
-            console.error('Error fetching teachers:', err);
             return res.status(500).json({ message: 'Error fetching teachers' });
         }
 
@@ -158,11 +162,8 @@ app.get('/api/teachers', authenticateToken, (req, res) => {
     });
 });
 
-// Error handling middleware
 app.use((err, req, res, next) => {
     if (err.name === 'UnauthorizedError') {
-        res.status(401).send('Invalid token...');
-    } else if (err.name === 'JsonWebTokenError') {
         res.status(401).send('Invalid token...');
     } else if (err.name === 'TokenExpiredError') {
         res.status(401).send('Token expired...');
@@ -175,3 +176,4 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
